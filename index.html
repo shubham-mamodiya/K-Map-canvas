@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>K-Map Designer (Max 4)</title>
+    <title>Interactive K-Map Designer</title>
     <style>
         :root {
             --primary: #2563eb;
@@ -12,6 +12,7 @@
             --border: #cbd5e1;
             --highlight: #dbeafe;
             --danger: #ef4444;
+            --input-bg: #fdfdfd;
         }
 
         body {
@@ -34,6 +35,222 @@
         .var-manager {
             display: grid;
             grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .btn-stack { display: flex; flex-direction: column; gap: 5px; }
+        
+        button {
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9rem;
+            touch-action: manipulation;
+        }
+
+        .btn-add { background: var(--primary); color: white; }
+        .btn-rem { background: #e2e8f0; color: var(--secondary); }
+        .btn-reset { background: var(--danger); color: white; grid-column: span 2; margin-top: 5px; }
+
+        /* Truth Table */
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 10px; border-radius: 8px; }
+        
+        .tt-table { width: 100%; border-collapse: collapse; font-family: monospace; }
+        .tt-table th, .tt-table td { border: 1px solid var(--border); padding: 12px 8px; text-align: center; }
+        .tt-table th { background: #f1f5f9; position: sticky; top: 0; }
+
+        .header-edit { color: var(--primary); text-decoration: underline; cursor: pointer; font-weight: bold; }
+        
+        /* Interactive Cells */
+        .val-cell { background: var(--bg); font-weight: bold; color: var(--primary); min-width: 45px; cursor: pointer; }
+        .in-cell { background: var(--input-bg); color: #475569; cursor: pointer; font-weight: 500; }
+        .in-cell:active, .val-cell:active { background: var(--highlight); }
+
+        /* K-Map */
+        .kmap-container { display: flex; flex-direction: column; gap: 30px; align-items: center; padding: 10px 0; }
+        .kmap-grid { display: grid; gap: 3px; background: var(--secondary); border: 3px solid var(--secondary); }
+        .kmap-cell { background: white; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 1.2rem; cursor: pointer; }
+        .kmap-header { background: #e2e8f0; font-size: 0.75rem; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+        .corner-label { font-style: italic; color: var(--secondary); padding: 5px; font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+
+<div class="main-wrapper">
+    <div class="card">
+        <h3>Variable Setup (Max 4)</h3>
+        <div class="var-manager">
+            <div class="btn-stack">
+                <label id="inLabel">Inputs: 4</label>
+                <button class="btn-add" onclick="modifyInputs(1)">+ Add Input</button>
+                <button class="btn-rem" onclick="modifyInputs(-1)">- Remove Input</button>
+            </div>
+            <div class="btn-stack">
+                <label id="outLabel">Outputs: 1</label>
+                <button class="btn-add" onclick="modifyOutputs(1)">+ Add Output</button>
+                <button class="btn-rem" onclick="modifyOutputs(-1)">- Remove Output</button>
+            </div>
+            <button class="btn-reset" onclick="resetData()">Clear All Data</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>1. Interactive Truth Table</h3>
+        <p style="font-size: 0.8rem;">Tap <b>any</b> cell (Input or Output) to change its value.</p>
+        <div class="table-scroll" id="ttArea"></div>
+    </div>
+
+    <div class="card">
+        <h3>2. K-Map View</h3>
+        <div id="kmapArea" class="kmap-container"></div>
+    </div>
+</div>
+
+<script>
+    let inputs = ['A', 'B', 'C', 'D'];
+    let outputs = ['F1'];
+    // inData stores the bits for each row: [[0,0,0,0], [0,0,0,1]...]
+    let inData = [];
+    let outData = [];
+
+    function initData() {
+        const rows = Math.pow(2, inputs.length);
+        inData = [];
+        outData = [];
+        for(let i=0; i<rows; i++) {
+            inData.push(i.toString(2).padStart(inputs.length, '0').split('').map(Number));
+        }
+        outputs.forEach(() => {
+            outData.push(new Array(rows).fill(0));
+        });
+    }
+
+    function modifyInputs(dir) {
+        const next = inputs.length + dir;
+        if (next < 1 || next > 4) return;
+        if (dir > 0) inputs.push(String.fromCharCode(65 + inputs.length));
+        else inputs.pop();
+        initData();
+        render();
+    }
+
+    function modifyOutputs(dir) {
+        const next = outputs.length + dir;
+        if (next < 1 || next > 10) return;
+        if (dir > 0) outputs.push('F' + (outputs.length + 1));
+        else outputs.pop();
+        initData();
+        render();
+    }
+
+    function toggleInput(rowIdx, bitIdx) {
+        inData[rowIdx][bitIdx] = inData[rowIdx][bitIdx] === 0 ? 1 : 0;
+        render();
+    }
+
+    function toggleOutput(oIdx, rIdx) {
+        let v = outData[oIdx][rIdx];
+        outData[oIdx][rIdx] = v === 0 ? 1 : (v === 1 ? 'X' : 0);
+        render();
+    }
+
+    function rename(isOut, idx) {
+        let current = isOut ? outputs[idx] : inputs[idx];
+        let n = prompt("New name:", current);
+        if(n) {
+            if(isOut) outputs[idx] = n; else inputs[idx] = n;
+            render();
+        }
+    }
+
+    function getGray(n) {
+        if(n === 0) return [''];
+        if(n === 1) return ['0', '1'];
+        let p = getGray(n-1);
+        return [...p.map(s => '0'+s), ...p.reverse().map(s => '1'+s)];
+    }
+
+    function renderTable() {
+        let h = `<table class="tt-table"><thead><tr><th>#</th>`;
+        inputs.forEach((n, i) => h += `<th onclick="rename(0,${i})"><span class="header-edit">${n}</span></th>`);
+        outputs.forEach((n, i) => h += `<th onclick="rename(1,${i})"><span class="header-edit">${n}</span></th>`);
+        h += `</tr></thead><tbody>`;
+        
+        inData.forEach((rowBits, i) => {
+            h += `<tr><td>${i}</td>`;
+            rowBits.forEach((bit, bitIdx) => {
+                h += `<td class="in-cell" onclick="toggleInput(${i},${bitIdx})">${bit}</td>`;
+            });
+            outputs.forEach((_, oi) => {
+                h += `<td class="val-cell" onclick="toggleOutput(${oi},${i})">${outData[oi][i]}</td>`;
+            });
+            h += `</tr>`;
+        });
+        document.getElementById('ttArea').innerHTML = h + `</tbody></table>`;
+    }
+
+    function renderKMaps() {
+        const area = document.getElementById('kmapArea');
+        area.innerHTML = '';
+        let rC = Math.floor(inputs.length / 2);
+        let cC = inputs.length - rC;
+        let rG = getGray(rC);
+        let cG = getGray(cC);
+
+        outputs.forEach((name, oi) => {
+            let w = document.createElement('div');
+            w.innerHTML = `<h4 style="margin-bottom:10px">${name}</h4>`;
+            let g = document.createElement('div');
+            g.className = 'kmap-grid';
+            g.style.gridTemplateColumns = `auto repeat(${cG.length}, 1fr)`;
+            
+            let corner = document.createElement('div');
+            corner.className = 'kmap-header corner-label';
+            corner.innerHTML = `${inputs.slice(0,rC).join('')}\\${inputs.slice(rC).join('')}`;
+            g.appendChild(corner);
+
+            cG.forEach(c => { let d = document.createElement('div'); d.className='kmap-header'; d.innerText=c; g.appendChild(d); });
+            
+            rG.forEach(rv => {
+                let rh = document.createElement('div'); rh.className='kmap-header'; rh.innerText=rv; g.appendChild(rh);
+                cG.forEach(cv => {
+                    const binaryTarget = rv + cv;
+                    // Find the value in outData where the corresponding inData matches binaryTarget
+                    let displayVal = 0;
+                    for(let i=0; i<inData.length; i++) {
+                        if(inData[i].join('') === binaryTarget) {
+                            displayVal = outData[oi][i];
+                            break;
+                        }
+                    }
+
+                    let c = document.createElement('div'); 
+                    c.className = 'kmap-cell'; 
+                    c.innerText = displayVal;
+                    // Note: In this mode, K-Map is view-only because inputs can be non-unique
+                    g.appendChild(c);
+                });
+            });
+            w.appendChild(g);
+            area.appendChild(w);
+        });
+    }
+
+    function resetData() { if(confirm("Clear all rows?")) { initData(); render(); } }
+    function render() { 
+        document.getElementById('inLabel').innerText = `Inputs: ${inputs.length}`;
+        document.getElementById('outLabel').innerText = `Outputs: ${outputs.length}`;
+        renderTable(); 
+        renderKMaps(); 
+    }
+    
+    initData();
+    render();
+</script>
+</body>
+</html>
             gap: 10px;
         }
 
